@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write   # needed to create GitHub Releases and upload assets
+
+jobs:
+  build:
+    name: Release build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: keenetic-tray.exe
+            make_target: windows
+
+          - os: ubuntu-latest
+            artifact: keenetic-tray-linux-amd64
+            make_target: linux
+
+          - os: macos-latest
+            artifact: keenetic-tray-darwin-arm64
+            make_target: mac-arm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+
+      # ── Windows ───────────────────────────────────────────────────────────
+      - name: Install GCC (Windows)
+        if: runner.os == 'Windows'
+        run: choco install mingw -y
+
+      - name: Add MinGW to PATH (Windows)
+        if: runner.os == 'Windows'
+        run: echo "C:\ProgramData\mingw64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        shell: pwsh
+
+      # ── Linux ─────────────────────────────────────────────────────────────
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y \
+            gcc \
+            libgl1-mesa-dev \
+            libx11-dev \
+            libxrandr-dev \
+            libxi-dev \
+            libxcursor-dev \
+            libxinerama-dev \
+            xorg-dev \
+            libdbus-1-dev \
+            libsecret-1-dev
+
+      # ── Build ─────────────────────────────────────────────────────────────
+      - name: Build
+        run: make ${{ matrix.make_target }} VERSION=${{ github.ref_name }}
+
+      # Upload artifact so the release job can collect all binaries
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.artifact }}
+          path: bin/${{ matrix.artifact }}
+          retention-days: 1
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: release/
+
+      - name: List release files
+        run: ls -lh release/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
+          files: release/*

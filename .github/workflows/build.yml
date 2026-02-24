@@ -1,0 +1,75 @@
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+    tags-ignore: ["v*"]   # releases are handled by release.yml
+  pull_request:
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: keenetic-tray.exe
+            make_target: windows
+
+          - os: ubuntu-latest
+            artifact: keenetic-tray-linux-amd64
+            make_target: linux
+
+          - os: macos-latest
+            artifact: keenetic-tray-darwin-arm64
+            make_target: mac-arm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+
+      # ── Windows: install GCC via Chocolatey ───────────────────────────────
+      - name: Install GCC (Windows)
+        if: runner.os == 'Windows'
+        run: choco install mingw -y
+
+      - name: Add MinGW to PATH (Windows)
+        if: runner.os == 'Windows'
+        run: echo "C:\ProgramData\mingw64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        shell: pwsh
+
+      # ── Linux: install Fyne system dependencies ───────────────────────────
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y \
+            gcc \
+            libgl1-mesa-dev \
+            libx11-dev \
+            libxrandr-dev \
+            libxi-dev \
+            libxcursor-dev \
+            libxinerama-dev \
+            xorg-dev \
+            libdbus-1-dev \
+            libsecret-1-dev
+
+      # ── macOS: Xcode CLI tools are pre-installed on macos-latest ─────────
+
+      - name: Build
+        run: make ${{ matrix.make_target }} VERSION=${{ github.sha }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}-${{ github.sha }}
+          path: bin/${{ matrix.artifact }}
+          retention-days: 14
+          if-no-files-found: error
